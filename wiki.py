@@ -17,14 +17,12 @@ from scipy.stats import gaussian_kde
 import os
 from collections import Counter
 from baseline import (
-    mean_teacher_regression,
     gcn_regression,
     fixmatch_regression,
     laprls_regression,
     tsvr_regression,
     tnnr_regression,
     ucvme_regression,
-    rankup_regression
 )
 
 #slience warnings
@@ -366,9 +364,7 @@ def _wrap_baseline(baseline_fn, sup_df, input_only_df, test_df):
 
     # 2) run the numeric regressor
 
-    if baseline_fn.__name__ == 'mean_teacher_regression':
-        preds, actuals = mean_teacher_regression(sup, ino, tst, lr=0.001, w_max=1.0,alpha=0.995,ramp_len=50)
-    elif baseline_fn.__name__ == 'gcn_regression':
+    if baseline_fn.__name__ == 'gcn_regression':
         preds, actuals = gcn_regression       (sup, ino, tst,dropout=0.1, hidden=32,lr=0.001)
     elif baseline_fn.__name__ == 'fixmatch_regression':
         preds, actuals = fixmatch_regression  (sup, ino, tst,alpha_ema=0.999,batch_size=64,conf_threshold=0.1,lambda_u_max=0.5,lr=0.0003,rampup_length=30)
@@ -380,8 +376,6 @@ def _wrap_baseline(baseline_fn, sup_df, input_only_df, test_df):
         preds, actuals = tnnr_regression     (sup, ino, tst, beta=0.1,lr=0.001, rep_dim=128)
     elif baseline_fn.__name__ == 'ucvme_regression':
         preds, actuals = ucvme_regression    (sup, ino, tst,lr=0.001,mc_T=5,w_unl=10)
-    elif baseline_fn.__name__ == 'rankup_regression':
-        preds, actuals = rankup_regression   (sup, ino, tst, alpha_rda=0.01, hidden_dim=512, lr=0.001, tau=0.9, temperature=0.5)
     else:
         raise ValueError(f"Unknown baseline function: {baseline_fn.__name__}")
 
@@ -440,22 +434,18 @@ def run_experiment(
     knn_mae, knn_mse = evaluate_regression_loss(knn_pred_emb, knn_act_emb)
 
     # 7) _wrap_baseline methods
-    mt_pred, mt_act = _wrap_baseline(mean_teacher_regression, sup_df, input_only_df, test_df)
     fm_pred, fm_act = _wrap_baseline(fixmatch_regression, sup_df, input_only_df, test_df)
     lap_pred, lap_act = _wrap_baseline(laprls_regression, sup_df, input_only_df, test_df)
     tsvr_pred, tsvr_act = _wrap_baseline(tsvr_regression, sup_df, input_only_df, test_df)
     tnnr_pred, tnnr_act = _wrap_baseline(tnnr_regression, sup_df, input_only_df, test_df)
     ucv_pred, ucv_act = _wrap_baseline(ucvme_regression, sup_df, input_only_df, test_df)
-    rank_pred, rank_act = _wrap_baseline(rankup_regression, sup_df, input_only_df, test_df)
     gcn_pred, gcn_act = _wrap_baseline(gcn_regression, sup_df, input_only_df, test_df)
 
-    mt_mae, mt_mse       = evaluate_regression_loss(mt_pred, mt_act)
     fm_mae, fm_mse       = evaluate_regression_loss(fm_pred, fm_act)
     lap_mae, lap_mse     = evaluate_regression_loss(lap_pred, lap_act)
     tsvr_mae, tsvr_mse   = evaluate_regression_loss(tsvr_pred, tsvr_act)
     tnnr_mae, tnnr_mse   = evaluate_regression_loss(tnnr_pred, tnnr_act)
     ucv_mae, ucv_mse     = evaluate_regression_loss(ucv_pred, ucv_act)
-    rank_mae, rank_mse   = evaluate_regression_loss(rank_pred, rank_act)
     gcn_mae, gcn_mse     = evaluate_regression_loss(gcn_pred, gcn_act)
 
     # 8) KMM forward on full marginals
@@ -522,13 +512,11 @@ def run_experiment(
         'regression': {
             'BKM':        {'MAE': bkm_mae,  'MSE': bkm_mse},
             'KNN':        {'MAE': knn_mae,  'MSE': knn_mse},
-            'MeanTeacher':{'MAE': mt_mae,   'MSE': mt_mse},
             'FixMatch':   {'MAE': fm_mae,   'MSE': fm_mse},
             'LapRLS':     {'MAE': lap_mae,  'MSE': lap_mse},
             'TSVR':       {'MAE': tsvr_mae,'MSE': tsvr_mse},
             'TNNR':       {'MAE': tnnr_mae,'MSE': tnnr_mse},
             'UCVME':      {'MAE': ucv_mae, 'MSE': ucv_mse},
-            'RankUp':     {'MAE': rank_mae,'MSE': rank_mse},
             'GCN':        {'MAE': gcn_mae, 'MSE': gcn_mse},
             'KMM':        {'MAE': kmm_mae, 'MSE': kmm_mse},
             'EM':         {'MAE': em_mae,  'MSE': em_mse},
@@ -638,14 +626,12 @@ def run_reversed_experiment(
         knn_preds = np.zeros((0, np.vstack(sup_rev["gene_coordinates"]).shape[1] if len(sup_rev) else 0))
     y_te = np.vstack(tst_rev["gene_coordinates"]) if len(tst_rev) else np.zeros_like(knn_preds)
 
-    mt_preds, mt_actuals = mean_teacher_regression(sup_rev, ino_rev, tst_rev, alpha=0.995, lr=0.001, ramp_len=10, w_max=0.5)
     gc_preds, gc_actuals = gcn_regression       (sup_rev, ino_rev, tst_rev, hidden=32, dropout=0.1, lr=0.001)
     fx_preds, fx_actuals = fixmatch_regression  (sup_rev, ino_rev, tst_rev, alpha_ema=0.999, batch_size=32, conf_threshold=0.05, lambda_u_max=0.5, lr=3e-4, rampup_length=10)
     lp_preds, lp_actuals = laprls_regression    (sup_rev, ino_rev, tst_rev, gamma=0.1, k=20, lam=0.001, sigma=2.0)
     ts_preds, ts_actuals = tsvr_regression      (sup_rev, ino_rev, tst_rev, C=10, epsilon=0.01, gamma='scale', self_training_frac=0.5)
     tn_preds, tn_actuals = tnnr_regression      (sup_rev, ino_rev, tst_rev, beta=1.0, lr=0.001, rep_dim=128)
     uv_preds, uv_actuals = ucvme_regression     (sup_rev, ino_rev, tst_rev, lr=3e-4, mc_T=5, w_unl=1.0)
-    ru_preds, ru_actuals = rankup_regression    (sup_rev, ino_rev, tst_rev, alpha_rda=0.01, hidden_dim=512, lr=1e-4, tau=0.8, temperature=0.7)
 
     gene_df_rev  = Xc_rev.rename(columns={'yv': 'gene_coordinates'}).copy()   # text side
     image_df_rev = Yc_rev.rename(columns={'x':  'morph_coordinates'}).copy()  # image side
@@ -706,14 +692,12 @@ def run_reversed_experiment(
 
     errors["BKM"],         mses["BKM"]         = eval_(bridged_preds,  bridged_actual)
     errors["KNN"],         mses["KNN"]         = eval_(knn_preds,      y_te)
-    errors["MeanTeacher"], mses["MeanTeacher"] = eval_(mt_preds,       mt_actuals)
     errors["GCN"],         mses["GCN"]         = eval_(gc_preds,       gc_actuals)
     errors["FixMatch"],    mses["FixMatch"]    = eval_(fx_preds,       fx_actuals)
     errors["LapRLS"],      mses["LapRLS"]      = eval_(lp_preds,       lp_actuals)
     errors["TSVR"],        mses["TSVR"]        = eval_(ts_preds,       ts_actuals)
     errors["TNNR"],        mses["TNNR"]        = eval_(tn_preds,       tn_actuals)
     errors["UCVME"],       mses["UCVME"]       = eval_(uv_preds,       uv_actuals)
-    errors["RankUp"],      mses["RankUp"]      = eval_(ru_preds,       ru_actuals)
     errors["KMM"],         mses["KMM"]         = eval_(kmm_rev_pred_emb, kmm_rev_act_emb)
     errors["EM"],          mses["EM"]          = eval_(em_rev_pred_emb,  em_rev_act_emb)
     errors["EOT"],         mses["EOT"]         = eval_(eot_rev_pred_emb, eot_rev_act_emb)
@@ -733,14 +717,12 @@ def run_reversed_experiment(
         "regression": {
             "BKM":        {"MAE": errors["BKM"],   "MSE": mses["BKM"]},
             "KNN":        {"MAE": errors["KNN"],   "MSE": mses["KNN"]},
-            "MeanTeacher":{"MAE": errors["MeanTeacher"], "MSE": mses["MeanTeacher"]},
             "GCN":        {"MAE": errors["GCN"],   "MSE": mses["GCN"]},
             "FixMatch":   {"MAE": errors["FixMatch"],  "MSE": mses["FixMatch"]},
             "LapRLS":     {"MAE": errors["LapRLS"],   "MSE": mses["LapRLS"]},
             "TSVR":       {"MAE": errors["TSVR"],   "MSE": mses["TSVR"]},
             "TNNR":       {"MAE": errors["TNNR"],   "MSE": mses["TNNR"]},
             "UCVME":      {"MAE": errors["UCVME"],  "MSE": mses["UCVME"]},
-            "RankUp":     {"MAE": errors["RankUp"], "MSE": mses["RankUp"]},
             "KMM":        {"MAE": errors["KMM"],   "MSE": mses["KMM"]},
             "EM":         {"MAE": errors["EM"],    "MSE": mses["EM"]},
             "EOT":        {"MAE": errors["EOT"],   "MSE": mses["EOT"]},
@@ -784,9 +766,9 @@ if __name__ == '__main__':
 
     models = [
       'BKM', 'KNN',
-      'MeanTeacher', 'GCN', 'FixMatch',
+      'GCN', 'FixMatch',
       'LapRLS', 'TSVR', 'TNNR', 'UCVME',
-      'RankUp', 'KMM', 'EM', 'EOT', 'GW'
+      'KMM', 'EM', 'EOT', 'GW'
     ]
     nK      = len(K_values)
     nSup    = len(sup_values)

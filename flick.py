@@ -24,14 +24,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from k_means_constrained import KMeansConstrained
 
 from baseline import (
-    mean_teacher_regression,
     gcn_regression,
     fixmatch_regression,
     laprls_regression,
     tsvr_regression,
     tnnr_regression,
     ucvme_regression,
-    rankup_regression
 )
 
 #slience warnings
@@ -39,7 +37,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) Load & initial TF–IDF + DBSCAN on captions to get “clusters” for sampling
+# Load & initial TF–IDF + DBSCAN on captions to get “clusters” for sampling
 # ─────────────────────────────────────────────────────────────────────────────
 df = pd.read_parquet("data/flickr30k.parquet")
 df = df.reset_index(drop=True)
@@ -70,7 +68,7 @@ df_pruned = df_valid[df_valid['cluster'].isin(eligible)].copy()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3) Rename embedding columns to match Script 1’s “x”, “yv”, “y”
+# Rename embedding columns to match Script 1’s “x”, “yv”, “y”
 # ─────────────────────────────────────────────────────────────────────────────
 
 df_pruned['x']  = df_pruned['image_emb'].apply(lambda arr: np.array(arr))
@@ -84,9 +82,6 @@ for img_id, grp in df_pruned.groupby('img_id'):
         "texts": grp['caption'].tolist()                        # 5 strings
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4) Copy in all of the experiment functions from Script 1 (no changes) 
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _nearest_caption(pred_vec: np.ndarray, img_id):
     """Return (best_emb, best_text) for this prediction."""
@@ -230,7 +225,7 @@ def build_decision_matrix(supervised_samples, x_clusters, y_clusters, K):
 
 def build_true_decision_vector(Xc, Yc, x_clusters, y_clusters, K):
     """
-    Build an oracle decision vector for Script 1 by majority‐voting
+    Build an oracle decision vector by majority‐voting
     over the *entire* Xc/Yc (inference+supervised and output-only+supervised).
 
     Xc           : DataFrame (must include original df['cluster'])
@@ -341,9 +336,7 @@ def _wrap_text_baseline(baseline_fn, sup_df, input_only_df, test_df):
 
     # 2) run the numeric regressor
 
-    if baseline_fn.__name__ == 'mean_teacher_regression':
-        preds, actuals = mean_teacher_regression(sup, ino, tst, lr=0.001, w_max=1.0,alpha=0.995,ramp_len=50)
-    elif baseline_fn.__name__ == 'gcn_regression':
+    if baseline_fn.__name__ == 'gcn_regression':
         preds, actuals = gcn_regression       (sup, ino, tst,dropout=0.1, hidden=32,lr=0.001)
     elif baseline_fn.__name__ == 'fixmatch_regression':
         preds, actuals = fixmatch_regression  (sup, ino, tst,alpha_ema=0.999,batch_size=64,conf_threshold=0.1,lambda_u_max=0.5,lr=0.0003,rampup_length=30)
@@ -355,8 +348,6 @@ def _wrap_text_baseline(baseline_fn, sup_df, input_only_df, test_df):
         preds, actuals = tnnr_regression     (sup, ino, tst, beta=0.1,lr=0.001, rep_dim=128)
     elif baseline_fn.__name__ == 'ucvme_regression':
         preds, actuals = ucvme_regression    (sup, ino, tst,lr=0.001,mc_T=5,w_unl=10)
-    elif baseline_fn.__name__ == 'rankup_regression':
-        preds, actuals = rankup_regression   (sup, ino, tst, alpha_rda=0.01, hidden_dim=512, lr=0.001, tau=0.9, temperature=0.5)
     else:
         raise ValueError(f"Unknown baseline function: {baseline_fn.__name__}")
 
@@ -396,7 +387,7 @@ def run_experiment(
       • Split into supervised, inference, output‐only
       • Size‐constrained KMeans on (inference+supervised) for x and (output-only+supervised) for y
       • Build bridged decision matrix and do Bridged inference
-      • Evaluate BKM, KNN, MeanTeacher, FixMatch, LapRLS, TSVR, TNNR, UCVME, RankUp, GCN, KMM, EM
+      • Evaluate Baselines
       • Returns dict with 'clustering', 'regression', and 'text' metrics
     """
     # 1) split
@@ -432,13 +423,11 @@ def run_experiment(
     knn_pred_emb, knn_act_emb, knn_pred_texts, knn_act_texts = knn_regression(sup_df, test_df, knn_neighbors)
 
     # 7) _wrap_text_baseline methods
-    mt_pred, mt_act, mt_text_act, mt_text_pred = _wrap_text_baseline(mean_teacher_regression, sup_df, input_only_df, test_df)
     fm_pred, fm_act, fm_text_act, fm_text_pred = _wrap_text_baseline(fixmatch_regression, sup_df, input_only_df, test_df)
     lap_pred, lap_act, lap_text_act, lap_text_pred = _wrap_text_baseline(laprls_regression, sup_df, input_only_df, test_df)
     tsvr_pred, tsvr_act, tsvr_text_act, tsvr_text_pred = _wrap_text_baseline(tsvr_regression, sup_df, input_only_df, test_df)
     tnnr_pred, tnnr_act, tnnr_text_act, tnnr_text_pred = _wrap_text_baseline(tnnr_regression, sup_df, input_only_df, test_df)
     ucv_pred, ucv_act, ucv_text_act, ucv_text_pred = _wrap_text_baseline(ucvme_regression, sup_df, input_only_df, test_df)
-    rank_pred, rank_act, rank_text_act, rank_text_pred = _wrap_text_baseline(rankup_regression, sup_df, input_only_df, test_df)
     gcn_pred, gcn_act, gcn_text_act, gcn_text_pred = _wrap_text_baseline(gcn_regression, sup_df, input_only_df, test_df)
 
     # 8) KMM forward on full marginals
@@ -514,13 +503,11 @@ def run_experiment(
     )
 
     # ── baselines via _wrap_text_baseline() ────────────────────────────────────
-    mt_mae, mt_mse = eval_model(mt_pred,   mt_text_pred,   inf_ids)
     fm_mae, fm_mse = eval_model(fm_pred,   fm_text_pred,   inf_ids)
     lap_mae, lap_mse = eval_model(lap_pred,  lap_text_pred,  inf_ids)
     tsvr_mae, tsvr_mse = eval_model(tsvr_pred, tsvr_text_pred, inf_ids)
     tnnr_mae, tnnr_mse = eval_model(tnnr_pred, tnnr_text_pred, inf_ids)
     ucv_mae, ucv_mse = eval_model(ucv_pred, ucv_text_pred,  inf_ids)
-    rank_mae, rank_mse = eval_model(rank_pred, rank_text_pred, inf_ids)
     gcn_mae, gcn_mse = eval_model(gcn_pred, gcn_text_pred,  inf_ids)
 
     # ── KMM & EM (same idea) ───────────────────────────────────────────────────
@@ -548,13 +535,11 @@ def run_experiment(
         'regression': {
             'BKM':        {'MAE': bkm_mae,  'MSE': bkm_mse},
             'KNN':        {'MAE': knn_mae,  'MSE': knn_mse},
-            'MeanTeacher':{'MAE': mt_mae,   'MSE': mt_mse},
             'FixMatch':   {'MAE': fm_mae,   'MSE': fm_mse},
             'LapRLS':     {'MAE': lap_mae,  'MSE': lap_mse},
             'TSVR':       {'MAE': tsvr_mae,'MSE': tsvr_mse},
             'TNNR':       {'MAE': tnnr_mae,'MSE': tnnr_mse},
             'UCVME':      {'MAE': ucv_mae, 'MSE': ucv_mse},
-            'RankUp':     {'MAE': rank_mae,'MSE': rank_mse},
             'GCN':        {'MAE': gcn_mae, 'MSE': gcn_mse},
             'KMM':        {'MAE': kmm_mae, 'MSE': kmm_mse},
             'EM':         {'MAE': em_mae,  'MSE': em_mse},
@@ -579,16 +564,7 @@ def run_reversed_experiment(
     mode: str = "transductive",  # or "inductive"
 ):
     """
-    Mirror of run_experiment:
-      • Supervised, inference, input-only (images) via get_data()
-      • Cluster on text (yv) then on image (x)
-      • Build decision vector from text→image clusters
-      • Predict image embeddings from text
-      • Evaluate Bridged + KNN + MeanTeacher + GCN + FixMatch + LapRLS + TSVR + TNNR + UCVME + RankUp + KMM + EM
-
-    Returns a dict with:
-      - 'clustering': {'AMI_text', 'AMI_image', 'Bridging Accuracy'}
-      - 'regression': { ... all MAE/MSE for each model ... }
+    Mirror of run_experiment
     """
     from collections import Counter
 
@@ -674,14 +650,12 @@ def run_reversed_experiment(
         knn_preds = np.zeros((0, np.vstack(sup_rev["gene_coordinates"]).shape[1] if len(sup_rev) else 0))
     y_te = np.vstack(tst_rev["gene_coordinates"]) if len(tst_rev) else np.zeros_like(knn_preds)
 
-    mt_preds, mt_actuals = mean_teacher_regression(sup_rev, ino_rev, tst_rev, alpha=0.995, lr=0.001, ramp_len=10, w_max=0.5)
     gc_preds, gc_actuals = gcn_regression       (sup_rev, ino_rev, tst_rev, hidden=32, dropout=0.1, lr=0.001)
     fx_preds, fx_actuals = fixmatch_regression  (sup_rev, ino_rev, tst_rev, alpha_ema=0.999, batch_size=32, conf_threshold=0.05, lambda_u_max=0.5, lr=3e-4, rampup_length=10)
     lp_preds, lp_actuals = laprls_regression    (sup_rev, ino_rev, tst_rev, gamma=0.1, k=20, lam=0.001, sigma=2.0)
     ts_preds, ts_actuals = tsvr_regression      (sup_rev, ino_rev, tst_rev, C=10, epsilon=0.01, gamma='scale', self_training_frac=0.5)
     tn_preds, tn_actuals = tnnr_regression      (sup_rev, ino_rev, tst_rev, beta=1.0, lr=0.001, rep_dim=128)
     uv_preds, uv_actuals = ucvme_regression     (sup_rev, ino_rev, tst_rev, lr=3e-4, mc_T=5, w_unl=1.0)
-    ru_preds, ru_actuals = rankup_regression    (sup_rev, ino_rev, tst_rev, alpha_rda=0.01, hidden_dim=512, lr=1e-4, tau=0.8, temperature=0.7)
 
     gene_df_rev  = Xc_rev.rename(columns={'yv': 'gene_coordinates'}).copy()   # text side
     image_df_rev = Yc_rev.rename(columns={'x':  'morph_coordinates'}).copy()  # image side
@@ -744,14 +718,12 @@ def run_reversed_experiment(
 
     errors["BKM"],         mses["BKM"]         = eval_(bridged_preds,  bridged_actual)
     errors["KNN"],         mses["KNN"]         = eval_(knn_preds,      y_te)
-    errors["MeanTeacher"], mses["MeanTeacher"] = eval_(mt_preds,       mt_actuals)
     errors["GCN"],         mses["GCN"]         = eval_(gc_preds,       gc_actuals)
     errors["FixMatch"],    mses["FixMatch"]    = eval_(fx_preds,       fx_actuals)
     errors["LapRLS"],      mses["LapRLS"]      = eval_(lp_preds,       lp_actuals)
     errors["TSVR"],        mses["TSVR"]        = eval_(ts_preds,       ts_actuals)
     errors["TNNR"],        mses["TNNR"]        = eval_(tn_preds,       tn_actuals)
     errors["UCVME"],       mses["UCVME"]       = eval_(uv_preds,       uv_actuals)
-    errors["RankUp"],      mses["RankUp"]      = eval_(ru_preds,       ru_actuals)
     errors["KMM"],         mses["KMM"]         = eval_(kmm_rev_pred_emb, kmm_rev_act_emb)
     errors["EM"],          mses["EM"]          = eval_(em_rev_pred_emb,  em_rev_act_emb)
     errors["EOT"],         mses["EOT"]         = eval_(eot_rev_pred_emb, eot_rev_act_emb)
@@ -771,14 +743,12 @@ def run_reversed_experiment(
         "regression": {
             "BKM":        {"MAE": errors["BKM"],   "MSE": mses["BKM"]},
             "KNN":        {"MAE": errors["KNN"],   "MSE": mses["KNN"]},
-            "MeanTeacher":{"MAE": errors["MeanTeacher"], "MSE": mses["MeanTeacher"]},
             "GCN":        {"MAE": errors["GCN"],   "MSE": mses["GCN"]},
             "FixMatch":   {"MAE": errors["FixMatch"],  "MSE": mses["FixMatch"]},
             "LapRLS":     {"MAE": errors["LapRLS"],   "MSE": mses["LapRLS"]},
             "TSVR":       {"MAE": errors["TSVR"],   "MSE": mses["TSVR"]},
             "TNNR":       {"MAE": errors["TNNR"],   "MSE": mses["TNNR"]},
             "UCVME":      {"MAE": errors["UCVME"],  "MSE": mses["UCVME"]},
-            "RankUp":     {"MAE": errors["RankUp"], "MSE": mses["RankUp"]},
             "KMM":        {"MAE": errors["KMM"],   "MSE": mses["KMM"]},
             "EM":         {"MAE": errors["EM"],    "MSE": mses["EM"]},
             "EOT":        {"MAE": errors["EOT"],   "MSE": mses["EOT"]},
@@ -824,9 +794,9 @@ if __name__ == '__main__':
     # Which models to record (must match keys in run_experiment’s metrics)
     models = [
       'BKM', 'KNN',
-      'MeanTeacher', 'GCN', 'FixMatch',
+      'GCN', 'FixMatch',
       'LapRLS', 'TSVR', 'TNNR', 'UCVME',
-      'RankUp', 'KMM', 'EM','EOT', 'GW'
+      'KMM', 'EM','EOT', 'GW'
     ]
     nK      = len(K_values)
     nSup    = len(sup_values)

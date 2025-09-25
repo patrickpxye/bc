@@ -56,134 +56,8 @@ import torchvision
 from torchvision import models, transforms
 from torchvision.models.resnet import ResNet50_Weights
 
-class MeanTeacherModel(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(MeanTeacherModel, self).__init__()
-        self.student = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, output_dim)
-        )
-        self.teacher = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, output_dim)
-        )
-        # Initialize teacher weights with student weights
-        self._update_teacher_weights(alpha=1.0)
-
-    def forward(self, x, use_teacher=False):
-        if use_teacher:
-            return self.teacher(x)
-        return self.student(x)
-
-    def _update_teacher_weights(self, alpha=0.99):
-        """Update teacher weights as an exponential moving average of student weights."""
-        for teacher_param, student_param in zip(self.teacher.parameters(), self.student.parameters()):
-            teacher_param.data = alpha * teacher_param.data + (1.0 - alpha) * student_param.data
-
-def mean_teacher_loss(student_preds, teacher_preds, labels, consistency_weight=0.1):
-    """Combines supervised loss with consistency loss."""
-    supervised_loss = nn.MSELoss()(student_preds, labels)
-    consistency_loss = nn.MSELoss()(student_preds, teacher_preds)
-    return supervised_loss + consistency_weight * consistency_loss
-
-def train_mean_teacher(model, sup_loader, unlab_loader, optim, device,
-                       alpha=0.99, w_max=0.1, ramp_len=1, global_step=0):
-    model.student.train()
-    model.teacher.eval()
-
-    total_steps = max(len(sup_loader), len(unlab_loader))
-    sup_iter   = iter(sup_loader)
-    unlab_iter = iter(unlab_loader)
-
-    for _ in range(total_steps):
-        try:
-            x_l, y_l = next(sup_iter)
-        except StopIteration:
-            sup_iter = iter(sup_loader)
-            x_l, y_l = next(sup_iter)
-
-        try:
-            x_u, _ = next(unlab_iter)
-        except StopIteration:
-            unlab_iter = iter(unlab_loader)
-            x_u, _ = next(unlab_iter)
-
-        x_l, y_l = x_l.to(device), y_l.to(device)
-        x_u      = x_u.to(device)
-
-        s_l = model(x_l)
-        with torch.no_grad():
-            t_l = model(x_l, use_teacher=True)
-            t_u = model(x_u, use_teacher=True)
-        s_u = model(x_u)
-
-        sup_loss  = F.mse_loss(s_l, y_l)         # labeled batch mean
-        cons_loss = F.mse_loss(s_u, t_u)         # unlabeled batch mean (size may differ)
-
-        global_step += 1
-        w = w_max * np.exp(-5 * (1 - min(1., global_step / ramp_len))**2)
-
-        loss = sup_loss + w * cons_loss
-        optim.zero_grad(); loss.backward(); optim.step()
-
-        with torch.no_grad():
-            model._update_teacher_weights(alpha)
-
-    return global_step
-
-
-def evaluate_mean_teacher(model, test_loader, device):
-    model.eval()
-    predictions, true_values = [], []
-    with torch.no_grad():
-        for x, y in test_loader:
-            # Convert inputs to float and move to the correct device
-            x, y = x.float().to(device), y.float().to(device)
-            preds = model(x, use_teacher=True)  # Use teacher model during evaluation
-            predictions.extend(preds.cpu().numpy())
-            true_values.extend(y.cpu().numpy())
-
-    return np.array(predictions), np.array(true_values)
-
-def mean_teacher_regression(supervised_df, input_only_df, test_df, lr=0.001, w_max=0.1, alpha=0.99, ramp_len=10, max_iter=2000):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_dim = len(supervised_df['morph_coordinates'].sample().iloc[0])
-    output_dim = len(supervised_df['gene_coordinates'].sample().iloc[0])
-    model = MeanTeacherModel(input_dim, output_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    # Prepare data loaders (labeled and unlabeled)
-    supervised_loader = torch.utils.data.DataLoader(
-        list(zip(torch.tensor(supervised_df['morph_coordinates'].tolist(), dtype=torch.float32),
-            torch.tensor(supervised_df['gene_coordinates'].tolist(), dtype=torch.float32))),
-        batch_size=32, shuffle=True)
-
-    unlabeled_loader = torch.utils.data.DataLoader(
-        list(zip(torch.tensor(input_only_df['morph_coordinates'].tolist(), dtype=torch.float32),
-            torch.zeros_like(torch.tensor(input_only_df['morph_coordinates'].tolist(), dtype=torch.float32)))),
-        batch_size=32, shuffle=True)
-
-    test_loader = torch.utils.data.DataLoader(
-        list(zip(torch.tensor(test_df['morph_coordinates'].tolist(), dtype=torch.float32),
-            torch.tensor(test_df['gene_coordinates'].tolist(), dtype=torch.float32))),
-        batch_size=32, shuffle=False)
-
-    for epoch in range(max_iter):
-        train_mean_teacher(model, supervised_loader, unlabeled_loader, optimizer, device,alpha=alpha, w_max=w_max, ramp_len=ramp_len)
-
-    predictions, actuals = evaluate_mean_teacher(model, test_loader, device)
-
-    return predictions, actuals
-
-
 ##############################################
-# Model D: FixMatch #
+# FixMatch #
 ##############################################
 import numpy as np
 import torch
@@ -191,9 +65,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-# ----------------------------------
-#  1) MLP backbone + EMA teacher
-# ----------------------------------
 class MLPRegressor(nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
@@ -362,9 +233,6 @@ class FixMatchRegressor:
         X = X.float().to(self.device)
         return self.teacher(X).cpu().numpy()
 
-# --------------------------------------------
-#  2) FixMatch training wrapper
-# --------------------------------------------
 def fixmatch_regression(
     supervised_df,
     input_only_df,
@@ -423,7 +291,7 @@ def fixmatch_regression(
     return preds_tst, y_tst
 
 ############################################################
-# Model E: Laplacian‑Regularised Least‑Squares (LapRLS)
+# Laplacian‑Regularised Least‑Squares (LapRLS)
 ############################################################
 
 import numpy as np
@@ -500,7 +368,7 @@ def laprls_regression(supervised_df, input_only_df, test_df, lam=1e-2, gamma=1.0
 
 
 ############################################################
-# Model F: Twin‑Neural‑Network Regression (TNNR)
+# Twin‑Neural‑Network Regression (TNNR)
 ############################################################
 
 import torch
@@ -647,7 +515,7 @@ def tnnr_regression(
 
 
 ##############################################
-#  Model G: Transductive SVM‑Regression (TSVR)
+#  Transductive SVM‑Regression (TSVR)
 ############################################## 
 
 from sklearn.svm import SVR
@@ -664,16 +532,6 @@ def tsvr_regression(
     gamma='scale',
     self_training_frac=0.2
 ):
-    """
-    Transductive SVR via iterative self-training:
-      1. fit SVR on supervised data
-      2. predict pseudolabels on unlabeled data
-      3. for up to max_iter:
-         – include all pseudolabels in first pass,
-           then only the self_training_frac fraction with smallest change
-         – refit on supervised + selected unlabeled
-         – stop if pseudolabels converge
-    """
     # 1) Prepare data
     X_sup = np.vstack(supervised_df['morph_coordinates'])
     y_sup = np.vstack(supervised_df['gene_coordinates'])
@@ -721,7 +579,7 @@ def tsvr_regression(
 
 
 ##############################################
-# Model H: Uncertainty‑Consistent VME (UCVME) 
+# Uncertainty‑Consistent VME (UCVME) 
 ##############################################
 import math
 
@@ -833,254 +691,10 @@ def ucvme_regression(
 
     return preds, y_tst_np
 
-##############################################
-#  RankUp             #
-##############################################
-
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
-
-
-# ------------------- Model -------------------
-
-class RankUpNet(nn.Module):
-    """
-    Backbone -> (regression head, ARC score head).
-    ARC emits a single scalar score per sample; pairs are formed via score differences.
-    """
-    def __init__(self, in_dim, hidden_dim, out_dim):
-        super().__init__()
-        self.backbone = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
-        )
-        self.reg_head = nn.Linear(hidden_dim, out_dim)
-        self.arc_head = nn.Linear(hidden_dim, 1)   # per-sample "rank score"
-
-    def forward(self, x):
-        feat = self.backbone(x)
-        y_pred = self.reg_head(feat)
-        arc_score = self.arc_head(feat)           # (B, 1)
-        return feat, y_pred, arc_score
-
-
-# ------------------- Helpers -------------------
-
-def _pair_indices(B: int):
-    """
-    Return indices (i,j) for upper-triangular pairs (i<j), excluding self/duplicates.
-    """
-    i, j = torch.triu_indices(B, B, offset=1)
-    return i, j
-
-def _pair_logits_from_scores(score: torch.Tensor, i_idx: torch.Tensor, j_idx: torch.Tensor, T: float = 1.0):
-    """
-    Given per-sample scores s (B,), build 2-class pair logits over pairs (i<j):
-      logits = [ (s_i - s_j)/T,  (s_j - s_i)/T ]
-    Returns tensor of shape (P, 2).
-    """
-    s = score.squeeze(-1)  # (B,)
-    margins = (s[i_idx] - s[j_idx]) / T
-    return torch.stack([margins, -margins], dim=1)  # (P, 2)
-
-@torch.no_grad()
-def rda_align(pseudo_y: torch.Tensor, labeled_y: torch.Tensor) -> torch.Tensor:
-    """
-    Regression Distribution Alignment (quantile replacement).
-    For each dimension (d), sort pseudo labels and labeled labels; interpolate the
-    labeled distribution to the pseudo's support; replace pseudo values with those
-    quantile-matched labeled values, then unsort back to original order.
-
-    Args:
-        pseudo_y  : (Bu, d)  pseudo labels (teacher predictions on unlabeled)
-        labeled_y : (Nl, d)  true labeled targets
-    Returns:
-        y_rda     : (Bu, d)  aligned targets
-    """
-    Bu, d = pseudo_y.shape
-    y_lab_sorted, _ = torch.sort(labeled_y, dim=0)
-    y_pse_sorted, pse_idx_sorted = torch.sort(pseudo_y, dim=0)
-
-    Nl = y_lab_sorted.size(0)
-    # quantile positions across labeled support in [0, Nl-1]
-    q = torch.linspace(0, Nl - 1, steps=Bu, device=pseudo_y.device)
-    q_lo = q.floor().long()
-    q_hi = q.ceil().long()
-    w = (q - q_lo.float()).unsqueeze(1)  # (Bu,1)
-
-    # interpolate labeled distribution to Bu points (per-dimension)
-    y_lab_interp = (1 - w) * y_lab_sorted[q_lo, :] + w * y_lab_sorted[q_hi, :]
-
-    # scatter back to original pseudo order
-    y_rda = torch.empty_like(pseudo_y)
-    for dim in range(d):
-        y_rda[pse_idx_sorted[:, dim], dim] = y_lab_interp[:, dim]
-    return y_rda
-
-
-# ------------------- Train API -------------------
-
-def rankup_regression(
-    sup_df,
-    input_only_df,
-    test_df,
-    hidden_dim=256,
-    lr=1e-3,
-    epochs=5000,
-    batch_size=128,
-    alpha_arc=1.0,          # supervised ARC loss weight
-    alpha_arc_ulb=1.0,      # unsupervised ARC (FixMatch-on-pairs) max weight
-    alpha_rda=0.05,         # RDA max weight
-    temperature=0.7,        # temperature for pair logits
-    tau=0.90,               # confidence threshold for unlabeled pairs
-    ema_m=0.999,            # EMA decay
-    rda_warmup=10,          # epochs before turning on RDA
-    rda_ramp=40,            # epochs to ramp alpha_rda to its max
-    ulb_warmup=10,          # epochs before turning on unlabeled ARC
-    ulb_ramp=40,            # ramp length for unlabeled ARC
-    pair_subsample=None,    # int or None: optionally subsample P pairs per batch for ARC losses
-    device=None
-):
-    """
-    sup_df:         dataframe with 'morph_coordinates' (X) and 'gene_coordinates' (y)
-    input_only_df:  dataframe with 'morph_coordinates' (unlabeled X)
-    test_df:        dataframe with 'morph_coordinates' (X_test) and 'gene_coordinates' (y_test)
-    """
-
-    T = temperature
-    device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-
-    # ----- tensors -----
-    Xs = torch.tensor(np.vstack(sup_df['morph_coordinates']), dtype=torch.float32, device=device)
-    ys = torch.tensor(np.vstack(sup_df['gene_coordinates']),  dtype=torch.float32, device=device)
-    Xu = torch.tensor(np.vstack(input_only_df['morph_coordinates']), dtype=torch.float32, device=device)
-    Xt = torch.tensor(np.vstack(test_df['morph_coordinates']), dtype=torch.float32, device=device)
-    yt = np.vstack(test_df['gene_coordinates'])  # return as numpy at the end
-
-    in_dim  = Xs.size(1)
-    out_dim = ys.size(1)
-
-    # For ARC supervision we need a scalar label; pick a deterministic scalarizer
-    # (paper uses scalar y; here we extend multi-dim to a scalar via L2 norm)
-    def _scalarize_y(y_batch: torch.Tensor) -> torch.Tensor:
-        return y_batch.norm(dim=1, keepdim=True)  # (B,1)
-
-    sup_loader = DataLoader(TensorDataset(Xs, ys), batch_size=batch_size, shuffle=True, drop_last=True)
-    unl_loader = DataLoader(TensorDataset(Xu),       batch_size=batch_size, shuffle=True, drop_last=True)
-
-    # ----- models -----
-    model = RankUpNet(in_dim, hidden_dim, out_dim).to(device)
-    ema_model = RankUpNet(in_dim, hidden_dim, out_dim).to(device)
-    ema_model.load_state_dict(model.state_dict())
-    for p in ema_model.parameters():
-        p.requires_grad_(False)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    # ----- schedules -----
-    def rampup(curr, start, length):
-        if curr < start:
-            return 0.0
-        return float(min((curr - start) / max(length, 1.0), 1.0))
-
-    # ----- training -----
-    model.train()
-    for epoch in range(epochs):
-        sup_iter = iter(sup_loader)
-        unl_iter = iter(unl_loader)
-
-        arc_ulb_weight = alpha_arc_ulb * rampup(epoch, ulb_warmup, ulb_ramp)
-        rda_weight     = alpha_rda     * rampup(epoch, rda_warmup, rda_ramp)
-
-        steps = min(len(sup_loader), len(unl_loader))
-        for _ in range(steps):
-            xb, yb = next(sup_iter)
-            (xu_w,) = next(unl_iter)
-
-            # strong augmentation (example: noise + scale jitter)
-            noise = torch.randn_like(xu_w) * 0.2
-            scale = 1.0 + 0.05 * torch.randn_like(xu_w)
-            xu_s = xu_w * scale + noise
-
-            # ARC scalar targets for supervised ranking
-            yb_scalar = _scalarize_y(yb)  # (B,1)
-
-            # ===== supervised forward =====
-            _, pred_b, s_b = model(xb)      # s_b: (B,1)
-            loss_reg = F.mse_loss(pred_b, yb)
-
-            # supervised ARC on pairs (i<j)
-            B = xb.size(0)
-            i_idx, j_idx = _pair_indices(B)
-
-            # optional pair subsampling for speed
-            if pair_subsample is not None and pair_subsample < i_idx.numel():
-                perm = torch.randperm(i_idx.numel(), device=device)[:pair_subsample]
-                i_idx, j_idx = i_idx[perm], j_idx[perm]
-
-            pair_logits_sup = _pair_logits_from_scores(s_b, i_idx, j_idx, T=T)
-            arc_targets_sup = (yb_scalar[i_idx] > yb_scalar[j_idx]).long().view(-1)  # (P,)
-            loss_arc_sup = F.cross_entropy(pair_logits_sup, arc_targets_sup)
-
-            # ===== unlabeled ARC (FixMatch on pairs; teacher=EMA weak, student strong) =====
-            with torch.no_grad():
-                _, _, s_u_w = ema_model(xu_w)  # (Bu,1)
-            Bu = xu_w.size(0)
-            ui, uj = _pair_indices(Bu)
-
-            if pair_subsample is not None and pair_subsample < ui.numel():
-                perm_u = torch.randperm(ui.numel(), device=device)[:pair_subsample]
-                ui, uj = ui[perm_u], uj[perm_u]
-
-            pair_logits_u_w = _pair_logits_from_scores(s_u_w, ui, uj, T=T)  # (Pu,2)
-            probs_w = F.softmax(pair_logits_u_w, dim=1)                      # (Pu,2)
-            conf_w, pseudo = probs_w.max(dim=1)                              # (Pu,)
-            mask = (conf_w >= tau).float()                                   # (Pu,)
-
-            _, _, s_u_s = model(xu_s)
-            pair_logits_u_s = _pair_logits_from_scores(s_u_s, ui, uj, T=1.0) # student logits (no extra temp)
-            per_pair_ulb = F.cross_entropy(pair_logits_u_s, pseudo, reduction='none')
-            loss_arc_unsup = (per_pair_ulb * mask).sum() / mask.sum().clamp_min(1.0)
-
-            # ===== RDA (quantile alignment) =====
-            # teacher pseudo-labels on unlabeled weak; align to labeled distribution; regress student to aligned targets
-            with torch.no_grad():
-                _, y_u_w_teacher, _ = ema_model(xu_w)   # (Bu, d)
-            y_rda = rda_align(y_u_w_teacher, ys)        # (Bu, d)
-            _, y_u_w_student, _ = model(xu_w)
-            loss_rda = F.mse_loss(y_u_w_student, y_rda)
-
-            # ===== total =====
-            loss = loss_reg + alpha_arc * loss_arc_sup + arc_ulb_weight * loss_arc_unsup + rda_weight * loss_rda
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # EMA update
-            with torch.no_grad():
-                for ema_p, p in zip(ema_model.parameters(), model.parameters()):
-                    ema_p.data.mul_(ema_m).add_(p.data, alpha=(1.0 - ema_m))
-
-        # (optional) print or log losses here per epoch
-
-    # ----- inference (EMA) -----
-    ema_model.eval()
-    with torch.no_grad():
-        _, preds_tst, _ = ema_model(Xt)
-    return preds_tst.detach().cpu().numpy(), yt
-
-
 ###################################
-#  New Baseline: Basic GCN        #
+#  GCN        #
 ###################################
 
-# --------------------------------------------
-# Revised GCN baseline (train: supervised+input_only; test: held-out test)
-# --------------------------------------------
 import numpy as np
 import torch
 import torch.nn as nn
@@ -1629,7 +1243,6 @@ def reversed_em_regression(
 
 
 
-#########New Methods: EOT-BM and GW
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler

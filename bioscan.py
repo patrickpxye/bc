@@ -65,13 +65,11 @@ from torchvision.models import (
 
 
 from baseline import (
-    mean_teacher_regression,
     fixmatch_regression,
     laprls_regression,
     tsvr_regression,
     tnnr_regression,
     ucvme_regression,
-    rankup_regression,
     gcn_regression,
     kernel_mean_matching_regression,
     reversed_kernel_mean_matching_regression,
@@ -654,8 +652,6 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
 
     ### Unlike BKM, we don't call a series of functions for the basline models, instead we put them in the helper "regression" functions
     knn_predictions, knn_actuals = knn_regression(supervised_samples, test_df, n_neighbors=max(1, int(n_samples * supervised)))
-    print("starting mean teacher")
-    mt_predictions, mt_actuals = mean_teacher_regression(supervised_samples, input_only_df, test_df, lr=0.001, w_max=1.0, alpha=0.95, ramp_len=10)
     print("starting fixmatch")
     fixmatch_predictions, fixmatch_actuals = fixmatch_regression(supervised_samples, input_only_df, test_df, batch_size=32, lr=1e-3,alpha_ema=0.99,lambda_u_max=0.5,rampup_length=10,conf_threshold=0.1)
     print("starting laprls")
@@ -666,8 +662,6 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
     tnnr_preds, tnnr_actuals = tnnr_regression(supervised_samples, input_only_df, test_df, rep_dim=128, beta=1.0, lr= 0.0001)
     print("starting ucvme")
     ucv_preds, ucv_actuals = ucvme_regression(supervised_samples, input_only_df, test_df,mc_T=5, lr=0.001, w_unl=10)
-    print("starting rankup")
-    rank_preds, rank_actuals = rankup_regression(supervised_samples, input_only_df, test_df,hidden_dim=512, lr=0.0001, alpha_rda=0.05, temperature=0.7, tau=0.8)
     print("starting gcn")
     gcn_preds, gcn_actuals = gcn_regression(supervised_samples, input_only_df, test_df, hidden=32, dropout=0.1, lr= 0.003)
     print("starting kernel mean matching baseline")
@@ -715,13 +709,11 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
     # Compute errors
     bkm_error, bkm_r2 = evaluate_loss(bkm_predictions, bkm_actuals)
     knn_error, knn_r2 =  evaluate_loss(knn_predictions, knn_actuals)
-    mean_teacher_error, mean_teacher_r2 = evaluate_loss(mt_predictions, mt_actuals)
     fixmatch_error, fixmatch_r2 =  evaluate_loss(fixmatch_predictions, fixmatch_actuals)
     lap_error, lap_r2 =  evaluate_loss(lap_preds, lap_actuals)
     tsvr_error, tsvr_r2 =  evaluate_loss(tsvr_preds, tsvr_actuals)
     tnnr_error, tnnr_r2 =  evaluate_loss(tnnr_preds, tnnr_actuals)
     ucv_error, ucv_r2 =  evaluate_loss(ucv_preds, ucv_actuals)
-    rank_error, rank_r2 = evaluate_loss(rank_preds, rank_actuals)
     gcn_error, gcn_r2 =  evaluate_loss(gcn_preds, gcn_actuals)
     kmm_error, kmm_r2 =  evaluate_loss(kmm_preds, kmm_actuals)
     em_error, em_r2 =  evaluate_loss(em_preds, em_actuals)
@@ -731,13 +723,11 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
     # Print results
     print(f"Bridged Clustering Error: {bkm_error}")
     print(f"KNN Error: {knn_error}")
-    print(f"Mean Teacher Error: {mean_teacher_error}")
     print(f"FixMatch Error: {fixmatch_error}")
     print(f"Laplacian RLS Error: {lap_error}")
     print(f"TSVR Error: {tsvr_error}")
     print(f"TNNR Error: {tnnr_error}")
     print(f"UCVME Error: {ucv_error}")
-    print(f"RankUp Error: {rank_error}")
     print(f"GCN Error: {gcn_error}")
     print(f"Kernel Mean Matching Error: {kmm_error}")
     print(f"EM Error: {em_error}")
@@ -748,13 +738,11 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
     errors = {
         'BKM': bkm_error,
         'KNN': knn_error,
-        'MeanTeacher': mean_teacher_error,
         'FixMatch': fixmatch_error,
         'Laplacian RLS': lap_error,
         'TSVR': tsvr_error,
         'TNNR': tnnr_error,
         'UCVME': ucv_error,
-        'RankUp': rank_error,
         'GCN': gcn_error,
         'Kernel Mean Matching': kmm_error,
         'EM': em_error,
@@ -765,13 +753,11 @@ def run_experiment(csv_path, image_folder, n_families, n_samples=50, supervised=
     rs = {
         'BKM': bkm_r2,
         'KNN': knn_r2,
-        'MeanTeacher': mean_teacher_r2,
         'FixMatch': fixmatch_r2,
         'Laplacian RLS': lap_r2,
         'TSVR': tsvr_r2,
         'TNNR': tnnr_r2,
         'UCVME': ucv_r2,
-        'RankUp': rank_r2,
         'GCN': gcn_r2,
         'Kernel Mean Matching': kmm_r2,
         'EM': em_r2,
@@ -798,15 +784,7 @@ def run_reversed_experiment(
     test_frac: float = 0.2        # NEW
 ):
     """
-    Mirror of `run_experiment`, predicting image features from genes,
-    **and** evaluating every baseline from your original script.
-
-    Returns:
-      errors        – dict of MAE by model
-      mses          – dict of MSE by model
-      ami_gene      – AMI of gene clusters vs. family
-      ami_image     – AMI of image clusters vs. family
-      decision_acc  – accuracy of gene→image decision vector
+    Mirror of run_experiment
     """
     # choose default KNN if not provided
     if knn_neighbors is None:
@@ -970,8 +948,6 @@ def run_reversed_experiment(
     _swap_cols_inplace(sup_rev)
     _swap_cols_inplace(in_rev)
     _swap_cols_inplace(tst_rev)
-    # Mean Teacher
-    mt_preds, mt_actuals   = mean_teacher_regression(sup_rev, in_rev, tst_rev, alpha=0.995, lr=0.001, ramp_len=10, w_max=0.5)
     # FixMatch
     fx_preds, fx_actuals   = fixmatch_regression(sup_rev, in_rev, tst_rev, alpha_ema=0.99, batch_size=32, conf_threshold=0.05, lambda_u_max=0.5, lr=1e-3, rampup_length=30)
     # LapRLS
@@ -982,8 +958,6 @@ def run_reversed_experiment(
     tn_preds, tn_actuals   = tnnr_regression(sup_rev, in_rev, tst_rev, rep_dim=128, beta=0.1, lr=0.0001)
     # UCVME
     uv_preds, uv_actuals   = ucvme_regression(sup_rev, in_rev, tst_rev, mc_T=5, lr=0.0003, w_unl=10)
-    # RankUp
-    ru_preds, ru_actuals   = rankup_regression(sup_rev, in_rev, tst_rev, alpha_rda=0.01, hidden_dim=512, lr=0.0001, temperature=0.5, tau=0.95)
     # GCN
     gc_preds, gc_actuals   = gcn_regression(sup_rev, in_rev, tst_rev, hidden=32, dropout=0.0, lr=0.001)
 
@@ -998,8 +972,6 @@ def run_reversed_experiment(
     errors["BKM"], mses["BKM"] = evals(bridged_preds, bridged_actual)
     # knn
     errors["KNN"],     mses["KNN"]     =  evals(knn_preds,     y_te)
-    # mean teacher
-    errors["MeanTeacher"],     mses["MeanTeacher"]     = evals(mt_preds,      mt_actuals)
     # fixmatch
     errors["FixMatch"],         mses["FixMatch"]         =  evals(fx_preds,      fx_actuals)
     # laprls
@@ -1010,8 +982,6 @@ def run_reversed_experiment(
     errors["TNNR"],             mses["TNNR"]             =  evals(tn_preds,      tn_actuals)
     # ucvme
     errors["UCVME"],            mses["UCVME"]            =  evals(uv_preds,      uv_actuals)
-    # rankup
-    errors["RankUp"],           mses["RankUp"]           = evals(ru_preds,      ru_actuals)
     # gcn
     errors["GCN"],              mses["GCN"]              =  evals(gc_preds,      gc_actuals)
     # kmm
@@ -1057,7 +1027,7 @@ if __name__ == '__main__':
     n_samples_values = [200]
     supervised_values = [0.005,0.01,0.015,0.02]  # Supervised sample fractions
     out_only_values = [0.1]
-    models = ['BKM', 'KNN', 'MeanTeacher', 'FixMatch', 'Laplacian RLS', 'TSVR', 'TNNR', 'UCVME', 'RankUp','GCN', 'Kernel Mean Matching', 'EM', 'EOT', 'GW']
+    models = ['BKM', 'KNN', 'FixMatch', 'Laplacian RLS', 'TSVR', 'TNNR', 'UCVME', 'GCN', 'Kernel Mean Matching', 'EM', 'EOT', 'GW']
 
     n_trials = 30
     
