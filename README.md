@@ -9,7 +9,7 @@ Bridged Clustering (**BC**) learns predictors from *unpaired* input-only data (�
 - Learn a **sparse, interpretable cluster-to-cluster bridge** from a few paired examples.  
 - Predict by mapping a new input to its nearest input cluster and returning the centroid of the linked output cluster.  
 
-BC is **model-agnostic**, **label-efficient** (1–4 pairs per cluster), and scales **linearly** once cluster count is small relative to dataset size.  
+BC is **model-agnostic** and **label-efficient**.
 It supports **bidirectional prediction** (X→Y and Y→X).
 
 ## Experiments
@@ -19,9 +19,9 @@ We evaluate on four multimodal datasets:
 - **Flickr30k**: everyday images ↔ captions  
 - **COCO**: object images ↔ captions  
 
-Baselines include SSL methods (MeanTeacher, FixMatch, LapRLS, TSVR, GCN, UCVME, RankUp), unmatched regression (KMM, EM), and output-aware methods (EOT, GW).
+Baselines include SSL methods (FixMatch, LapRLS, TSVR, GCN, UCVME), unmatched regression (KMM, EM), and output-aware methods (EOT, GW).
 
 ## Running
 1. Install dependencies (Python 3.10+, PyTorch, scikit-learn, POT, PyG).  
-2. Prepare data splits (`input-only`, `output-only`, and small `supervised` set).  
-3. Run experiments
+2. Download datasets from publically available sources. Prepare data splits (`input-only`, `output-only`, and small `supervised` set).  
+3. Run experiments with scripts
